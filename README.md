@@ -1,6 +1,6 @@
 # Tower defense
 HTML, CSS Tailwind, Javascript
 
-![image](https://github.com/user-attachments/assets/4c60649f-864e-4039-a06b-898acf4571c6)
+![image](https://github.com/user-attachments/assets/34e0f369-c39c-4f77-b002-09cda6ac4ab2)
 
 Open game.html
