@@ -155,7 +155,7 @@
         let enemies = [];
         let towers = [];
         let projectiles = [];
-        let placingTower = false; // Is the player currently placing a tower?
+        let placingTower = false;
         let selectedTowerType = null;
         let mouse = { x: 0, y: 0 };
         let currentWaveEnemies = 0;
@@ -163,34 +163,34 @@
         let waveInProgress = false;
         let gameOver = false;
         let gameWon = false;
-        let animationFrameId; // To control the game loop
-        let spawnTimeoutId; // To clear pending spawns on reset
+        let animationFrameId;
+        let spawnTimeoutId;
 
         // --- Tower Configuration ---
         const towerTypes = {
             basic: {
                 cost: 50,
-                range: 100, // pixels
-                fireRate: 50, // *** Increased fire rate (lower number is faster) from 60 to 50 ***
-                damage: 15, // Kept damage at 15
-                color: 'blue',
+                range: 100,
+                fireRate: 50,
+                damage: 15,
+                color: '#607D8B', // Blue Grey color for tower base
+                colorDark: '#455A64', // Darker shade for detail
                 projectileColor: 'cyan',
                 projectileSpeed: 5,
                 size: TILE_SIZE * 0.8
             }
-            // Add more tower types here later
         };
 
         // --- Enemy Configuration ---
         const enemyTypes = {
             basic: {
                 speed: 1,
-                health: 40, // *** Decreased health from 50 to 40 ***
-                color: 'red',
+                health: 40,
+                color: '#E91E63', // Pinkish color for enemy
+                colorDark: '#C2185B', // Darker shade
                 size: TILE_SIZE * 0.6,
-                reward: 5 // Money gained on kill
+                reward: 5
             }
-            // Add more enemy types here later
         };
 
         // --- UI Elements ---
@@ -204,36 +204,126 @@
         const messageText = document.getElementById('message-text');
         const restartBtn = document.getElementById('restartBtn');
 
+        // --- SVG Path Drawing Functions ---
+
+        /**
+         * Draws a simple turret/castle tower shape.
+         * @param {CanvasRenderingContext2D} ctx - The canvas rendering context.
+         * @param {number} x - Center x-coordinate.
+         * @param {number} y - Center y-coordinate.
+         * @param {number} size - The base size of the tower.
+         * @param {string} baseColor - Fill color for the main body.
+         * @param {string} detailColor - Fill color for the top battlements.
+         */
+        function drawTowerShape(ctx, x, y, size, baseColor, detailColor) {
+            const halfSize = size / 2;
+            const topHeight = size * 0.25; // Height of the battlement part
+            const baseHeight = size - topHeight;
+            const battlementWidth = size / 4; // Width of each battlement block
+
+            ctx.save(); // Save context state
+            ctx.translate(x, y); // Move origin to tower center
+
+            // Draw Base
+            ctx.fillStyle = baseColor;
+            ctx.fillRect(-halfSize, -halfSize + topHeight, size, baseHeight);
+            // Simple outline for base
+            ctx.strokeStyle = '#37474F';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(-halfSize, -halfSize + topHeight, size, baseHeight);
+
+
+            // Draw Top Battlements
+            ctx.fillStyle = detailColor;
+            // Draw 3 battlements
+            for (let i = 0; i < 3; i++) {
+                ctx.fillRect(-halfSize + i * (battlementWidth * 1.33), -halfSize, battlementWidth, topHeight);
+            }
+             // Simple outline for top
+            ctx.strokeStyle = '#263238';
+            ctx.lineWidth = 1;
+             for (let i = 0; i < 3; i++) {
+                ctx.strokeRect(-halfSize + i * (battlementWidth * 1.33), -halfSize, battlementWidth, topHeight);
+            }
+
+
+            ctx.restore(); // Restore context state
+        }
+
+        /**
+         * Draws a simple blob/monster enemy shape using quadratic curves.
+         * @param {CanvasRenderingContext2D} ctx - The canvas rendering context.
+         * @param {number} x - Center x-coordinate.
+         * @param {number} y - Center y-coordinate.
+         * @param {number} size - The approximate size (diameter) of the enemy.
+         * @param {string} fillColor - The main fill color.
+         * @param {string} strokeColor - The outline color.
+         */
+        function drawEnemyShape(ctx, x, y, size, fillColor, strokeColor) {
+            const radius = size / 2;
+            ctx.save();
+            ctx.translate(x, y);
+
+            ctx.fillStyle = fillColor;
+            ctx.strokeStyle = strokeColor;
+            ctx.lineWidth = 2;
+
+            ctx.beginPath();
+            ctx.moveTo(0, -radius); // Start top center
+            // Use quadratic curves for a blobby shape
+            ctx.quadraticCurveTo(radius * 0.7, -radius, radius, 0); // Top-right curve
+            ctx.quadraticCurveTo(radius, radius * 0.7, radius * 0.5, radius); // Right-bottom curve
+            ctx.quadraticCurveTo(0, radius * 1.1, -radius * 0.5, radius); // Bottom curve
+            ctx.quadraticCurveTo(-radius, radius * 0.7, -radius, 0); // Left-bottom curve
+            ctx.quadraticCurveTo(-radius * 0.7, -radius, 0, -radius); // Top-left curve
+            ctx.closePath();
+
+            ctx.fill();
+            ctx.stroke();
+
+             // Add a simple "eye"
+             ctx.fillStyle = '#FFF'; // White eye
+             ctx.beginPath();
+             ctx.arc(radius * 0.1, -radius * 0.1, radius * 0.15, 0, Math.PI * 2);
+             ctx.fill();
+             ctx.fillStyle = '#000'; // Black pupil
+             ctx.beginPath();
+             ctx.arc(radius * 0.15, -radius * 0.08, radius * 0.07, 0, Math.PI * 2);
+             ctx.fill();
+
+
+            ctx.restore();
+        }
+
+
         // --- Game Classes ---
         class Enemy {
             constructor(type) {
                 this.pathIndex = 0;
                 const startTile = path[0];
-                this.x = startTile.x * TILE_SIZE + TILE_SIZE / 2; // Start at center of the first tile
+                this.x = startTile.x * TILE_SIZE + TILE_SIZE / 2;
                 this.y = startTile.y * TILE_SIZE + TILE_SIZE / 2;
                 this.type = type;
-                this.speed = enemyTypes[type].speed;
-                this.maxHealth = enemyTypes[type].health; // Use the configured health
+                const config = enemyTypes[type]; // Get config once
+                this.speed = config.speed;
+                this.maxHealth = config.health;
                 this.health = this.maxHealth;
-                this.color = enemyTypes[type].color;
-                this.size = enemyTypes[type].size;
-                this.reward = enemyTypes[type].reward;
+                this.color = config.color;
+                this.colorDark = config.colorDark;
+                this.size = config.size;
+                this.reward = config.reward;
                 this.targetX = (path[1].x * TILE_SIZE) + TILE_SIZE / 2;
                 this.targetY = (path[1].y * TILE_SIZE) + TILE_SIZE / 2;
             }
 
             move() {
-                if (this.pathIndex >= path.length - 1) {
-                    // Reached the end
-                    return true; // Indicate enemy reached end
-                }
+                 if (this.pathIndex >= path.length - 1) return true;
 
                 const dx = this.targetX - this.x;
                 const dy = this.targetY - this.y;
                 const distance = Math.sqrt(dx * dx + dy * dy);
 
                 if (distance < this.speed) {
-                    // Reached the current target waypoint
                     this.x = this.targetX;
                     this.y = this.targetY;
                     this.pathIndex++;
@@ -242,40 +332,41 @@
                          this.targetX = nextTile.x * TILE_SIZE + TILE_SIZE / 2;
                          this.targetY = nextTile.y * TILE_SIZE + TILE_SIZE / 2;
                     } else {
-                        // Ensure it moves off screen towards the final point
-                        this.targetX = (path[this.pathIndex].x + 1) * TILE_SIZE + TILE_SIZE / 2; // Move one tile further right
+                        this.targetX = (path[this.pathIndex].x + 1) * TILE_SIZE + TILE_SIZE / 2;
                         this.targetY = path[this.pathIndex].y * TILE_SIZE + TILE_SIZE / 2;
                     }
-
                 } else {
-                    // Move towards the target
                     this.x += (dx / distance) * this.speed;
                     this.y += (dy / distance) * this.speed;
                 }
-                return false; // Indicate enemy still moving
+                return false;
             }
 
             takeDamage(amount) {
                 this.health -= amount;
-                return this.health <= 0; // Return true if dead
+                return this.health <= 0;
             }
 
             draw(ctx) {
-                // Draw enemy body
-                ctx.fillStyle = this.color;
-                ctx.beginPath();
-                ctx.arc(this.x, this.y, this.size / 2, 0, Math.PI * 2);
-                ctx.fill();
+                // *** Use the new drawing function ***
+                drawEnemyShape(ctx, this.x, this.y, this.size, this.color, this.colorDark);
 
-                // Draw health bar only if enemy has taken damage
+                // Draw health bar (remains the same)
                  if (this.health < this.maxHealth) {
-                    const healthBarWidth = this.size;
+                    const healthBarWidth = this.size * 0.8; // Slightly smaller bar
                     const healthBarHeight = 5;
-                    const healthPercentage = Math.max(0, this.health / this.maxHealth); // Ensure percentage doesn't go below 0 visually
-                    ctx.fillStyle = 'grey';
-                    ctx.fillRect(this.x - healthBarWidth / 2, this.y - this.size / 2 - healthBarHeight - 2, healthBarWidth, healthBarHeight);
-                    ctx.fillStyle = 'lime';
-                    ctx.fillRect(this.x - healthBarWidth / 2, this.y - this.size / 2 - healthBarHeight - 2, healthBarWidth * healthPercentage, healthBarHeight);
+                    const healthPercentage = Math.max(0, this.health / this.maxHealth);
+                    const barX = this.x - healthBarWidth / 2;
+                    const barY = this.y - this.size / 2 - healthBarHeight - 4; // Position above enemy
+
+                    ctx.fillStyle = '#333'; // Dark background for bar
+                    ctx.fillRect(barX, barY, healthBarWidth, healthBarHeight);
+                    ctx.fillStyle = healthPercentage > 0.5 ? 'lime' : (healthPercentage > 0.2 ? 'yellow' : 'red'); // Color changes with health
+                    ctx.fillRect(barX, barY, healthBarWidth * healthPercentage, healthBarHeight);
+                     // Optional: Add border to health bar
+                    ctx.strokeStyle = '#555';
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(barX, barY, healthBarWidth, healthBarHeight);
                  }
             }
         }
@@ -285,23 +376,24 @@
                 this.x = x;
                 this.y = y;
                 this.type = type;
-                this.range = towerTypes[type].range;
-                this.fireRate = towerTypes[type].fireRate; // Use configured fire rate
-                this.damage = towerTypes[type].damage;
-                this.color = towerTypes[type].color;
-                this.projectileColor = towerTypes[type].projectileColor;
-                this.projectileSpeed = towerTypes[type].projectileSpeed;
-                this.size = towerTypes[type].size;
-                this.fireCooldown = 0; // Timer for firing
-                this.target = null; // Current enemy target
+                const config = towerTypes[type]; // Get config once
+                this.range = config.range;
+                this.fireRate = config.fireRate;
+                this.damage = config.damage;
+                this.color = config.color;
+                this.colorDark = config.colorDark; // Store dark color
+                this.projectileColor = config.projectileColor;
+                this.projectileSpeed = config.projectileSpeed;
+                this.size = config.size;
+                this.fireCooldown = 0;
+                this.target = null;
             }
 
             findTarget(enemies) {
                 this.target = null;
-                let closestDist = this.range * this.range; // Use squared distance for efficiency
+                let closestDist = this.range * this.range;
 
                 enemies.forEach(enemy => {
-                    // Ensure enemy is actually targetable (health > 0)
                     if (enemy.health > 0) {
                         const dx = enemy.x - this.x;
                         const dy = enemy.y - this.y;
@@ -319,71 +411,62 @@
                     this.fireCooldown--;
                 }
 
-                // Check if current target is still valid (alive and in range)
                 if (this.target) {
                     const dx = this.target.x - this.x;
                     const dy = this.target.y - this.y;
                     const distSq = dx * dx + dy * dy;
                     if (this.target.health <= 0 || distSq > this.range * this.range) {
-                        this.target = null; // Target lost or dead
+                        this.target = null;
                     }
                 }
 
-                // Find a new target if needed
                 if (!this.target) {
                     this.findTarget(enemies);
                 }
 
-                // Shoot if target found and cooldown ready
                 if (this.target && this.fireCooldown <= 0) {
                     this.shoot(projectiles);
-                    this.fireCooldown = this.fireRate; // Reset cooldown using the tower's fireRate
+                    this.fireCooldown = this.fireRate;
                 }
             }
 
             shoot(projectiles) {
-                projectiles.push(new Projectile(this.x, this.y, this.target, this.damage, this.projectileSpeed, this.projectileColor));
+                // Add projectile slightly offset from center, e.g., top of tower
+                 const projectileStartX = this.x;
+                 const projectileStartY = this.y - this.size * 0.3; // Start near top
+                 projectiles.push(new Projectile(projectileStartX, projectileStartY, this.target, this.damage, this.projectileSpeed, this.projectileColor));
             }
 
             draw(ctx) {
-                ctx.fillStyle = this.color;
-                ctx.beginPath();
-                // Simple square tower for now
-                ctx.rect(this.x - this.size / 2, this.y - this.size / 2, this.size, this.size);
-                ctx.fill();
+                // *** Use the new drawing function ***
+                drawTowerShape(ctx, this.x, this.y, this.size, this.color, this.colorDark);
 
-                // Draw range indicator when placing or selected (only if mouse is over canvas)
-                if (placingTower && selectedTowerType === this.type && mouse.x > 0 && mouse.y > 0) {
-                     const tileX = Math.floor(mouse.x / TILE_SIZE);
-                     const tileY = Math.floor(mouse.y / TILE_SIZE);
-                     const previewX = tileX * TILE_SIZE + TILE_SIZE / 2;
-                     const previewY = tileY * TILE_SIZE + TILE_SIZE / 2;
-
-                    // Draw range of the tower being placed at the mouse cursor position
-                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-                    ctx.lineWidth = 1;
-                    ctx.beginPath();
-                    ctx.arc(previewX, previewY, this.range, 0, Math.PI * 2);
-                    ctx.stroke();
-                }
+                // Draw range indicator when placing (remains the same logic, but called from game loop)
             }
         }
 
         class Projectile {
-            constructor(startX, startY, target, damage, speed, color) {
+             constructor(startX, startY, target, damage, speed, color) {
                 this.x = startX;
                 this.y = startY;
                 this.target = target;
                 this.damage = damage;
                 this.speed = speed;
                 this.color = color;
-                this.size = 5;
+                this.size = 6; // Slightly larger projectile
+                this.trail = []; // For adding a trail effect
+                this.trailLength = 5;
             }
 
             move() {
-                // Check if target exists and has health before moving/damaging
+                 // Add current position to trail
+                this.trail.push({ x: this.x, y: this.y });
+                if (this.trail.length > this.trailLength) {
+                    this.trail.shift(); // Remove oldest point
+                }
+
                 if (!this.target || this.target.health <= 0) {
-                    return true; // Target gone or already dead, remove projectile
+                    return true;
                 }
 
                 const dx = this.target.x - this.x;
@@ -391,34 +474,48 @@
                 const distance = Math.sqrt(dx * dx + dy * dy);
 
                 if (distance < this.speed) {
-                    // Hit target
                     const dead = this.target.takeDamage(this.damage);
                     if (dead) {
                          money += this.target.reward;
                          score += 10;
-                         // updateUI(); // UI updated in game loop anyway
                     }
-                    return true; // Indicate hit
+                    return true; // Hit
                 } else {
-                    // Move towards target
                     this.x += (dx / distance) * this.speed;
                     this.y += (dy / distance) * this.speed;
                 }
-                return false; // Still moving
+                return false; // Moving
             }
 
             draw(ctx) {
+                 // Draw trail
+                 ctx.lineWidth = this.size * 0.5;
+                 for (let i = 0; i < this.trail.length; i++) {
+                     const point = this.trail[i];
+                     const alpha = (i + 1) / this.trailLength * 0.5; // Fade out trail
+                     ctx.fillStyle = `rgba(${parseInt(this.color.slice(1, 3), 16)}, ${parseInt(this.color.slice(3, 5), 16)}, ${parseInt(this.color.slice(5, 7), 16)}, ${alpha})`; // Use rgba for trail
+                     ctx.beginPath();
+                     ctx.arc(point.x, point.y, (this.size / 2) * ((i + 1) / this.trailLength), 0, Math.PI * 2); // Trail points get smaller
+                     ctx.fill();
+                 }
+
+                // Draw main projectile
                 ctx.fillStyle = this.color;
                 ctx.beginPath();
                 ctx.arc(this.x, this.y, this.size / 2, 0, Math.PI * 2);
                 ctx.fill();
+                 // Add a small highlight
+                 ctx.fillStyle = 'white';
+                 ctx.beginPath();
+                 ctx.arc(this.x + this.size * 0.1, this.y - this.size * 0.1, this.size * 0.15, 0, Math.PI * 2);
+                 ctx.fill();
             }
         }
 
         // --- Helper Functions ---
 
         function drawGrid(ctx) {
-            ctx.strokeStyle = '#ccc'; // Lighter grid lines
+            ctx.strokeStyle = '#D7CCC8'; // Brownish grid lines
             ctx.lineWidth = 0.5;
             for (let i = 0; i <= rows; i++) {
                 ctx.beginPath();
@@ -435,16 +532,16 @@
         }
 
         function drawPath(ctx) {
-            ctx.fillStyle = '#bbb'; // Path color
-            ctx.lineWidth = TILE_SIZE;
-            ctx.strokeStyle = '#999'; // Path border color
+            ctx.fillStyle = '#A1887F'; // Brown path color
+            ctx.strokeStyle = '#795548'; // Darker brown border
+            ctx.lineWidth = 1; // Thinner line for path edges
 
             if (path.length < 2) return;
 
-            ctx.beginPath();
             // Draw squares for the path tiles
             path.forEach(point => {
                  ctx.fillRect(point.x * TILE_SIZE, point.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                 ctx.strokeRect(point.x * TILE_SIZE, point.y * TILE_SIZE, TILE_SIZE, TILE_SIZE); // Add border to each tile
             });
         }
 
@@ -453,35 +550,29 @@
             livesDisplay.textContent = lives;
             waveDisplay.textContent = wave;
             scoreDisplay.textContent = score;
-            // Only disable if not enough money AND not currently placing that tower type
             buildTowerBtn.disabled = money < towerTypes.basic.cost && !(placingTower && selectedTowerType === 'basic');
-            startWaveBtn.disabled = waveInProgress; // Disable during a wave
+            startWaveBtn.disabled = waveInProgress;
         }
 
         function spawnEnemy() {
-             // Clear previous timeout just in case
              if(spawnTimeoutId) clearTimeout(spawnTimeoutId);
-
-             if (enemiesSpawnedThisWave < currentWaveEnemies && waveInProgress) { // Check waveInProgress too
-                 enemies.push(new Enemy('basic')); // Only basic enemies for now
+             if (enemiesSpawnedThisWave < currentWaveEnemies && waveInProgress) {
+                 enemies.push(new Enemy('basic'));
                  enemiesSpawnedThisWave++;
-                 // Simple spawn timer - spawn every 0.5 seconds
-                 spawnTimeoutId = setTimeout(spawnEnemy, 500);
+                 spawnTimeoutId = setTimeout(spawnEnemy, 500); // Spawn every 0.5 seconds
              } else {
-                 spawnTimeoutId = null; // Reset timeout ID when spawning finishes
+                 spawnTimeoutId = null;
              }
         }
 
         function startNextWave() {
             if (waveInProgress || gameOver || gameWon) return;
-
             wave++;
             waveInProgress = true;
             enemiesSpawnedThisWave = 0;
-            // Keep adjusted enemy count: starts lower and scales slower
-            currentWaveEnemies = 3 + wave * 2; // Example: 5, 7, 9... enemies
+            currentWaveEnemies = 3 + wave * 2; // 5, 7, 9...
             updateUI();
-            spawnEnemy(); // Start spawning the first enemy
+            spawnEnemy();
         }
 
         function isPathTile(tileX, tileY) {
@@ -501,36 +592,25 @@
 
             const towerConfig = towerTypes[selectedTowerType];
             const cost = towerConfig.cost;
-
-            // Calculate tile coordinates from mouse click
             const tileX = Math.floor(mouseX / TILE_SIZE);
             const tileY = Math.floor(mouseY / TILE_SIZE);
 
-             // Check if placement is valid before spending money
             if (money >= cost &&
-                tileX >= 0 && tileX < cols && tileY >= 0 && tileY < rows && // Check boundaries
-                !isPathTile(tileX, tileY) && // Check not on path
-                !isOccupied(tileX, tileY)) // Check not occupied
+                tileX >= 0 && tileX < cols && tileY >= 0 && tileY < rows &&
+                !isPathTile(tileX, tileY) &&
+                !isOccupied(tileX, tileY))
             {
-                // Place tower in the center of the tile
                 const towerX = tileX * TILE_SIZE + TILE_SIZE / 2;
                 const towerY = tileY * TILE_SIZE + TILE_SIZE / 2;
-
                 money -= cost;
                 towers.push(new Tower(towerX, towerY, selectedTowerType));
-                updateUI(); // Update UI after spending money
-
+                updateUI();
             } else {
-                 // Provide feedback if placement failed
-                 if (money < cost) {
-                     console.log("Not enough money!");
-                 } else if (isPathTile(tileX, tileY)) {
-                     console.log("Cannot place on path");
-                 } else if (isOccupied(tileX, tileY)) {
-                     console.log("Tile already occupied");
-                 } else {
-                     console.log("Cannot place outside bounds");
-                 }
+                 // Log reason for failure
+                 if (money < cost) console.log("Not enough money!");
+                 else if (isPathTile(tileX, tileY)) console.log("Cannot place on path");
+                 else if (isOccupied(tileX, tileY)) console.log("Tile already occupied");
+                 else console.log("Cannot place outside bounds");
             }
         }
 
@@ -544,52 +624,30 @@
         }
 
         function resetGame() {
-            // Stop the current game loop immediately
-             if (animationFrameId) {
-                cancelAnimationFrame(animationFrameId);
-                animationFrameId = null;
-            }
-            // Clear any pending enemy spawns
-             if (spawnTimeoutId) {
-                 clearTimeout(spawnTimeoutId);
-                 spawnTimeoutId = null;
-             }
+             if (animationFrameId) cancelAnimationFrame(animationFrameId);
+             if (spawnTimeoutId) clearTimeout(spawnTimeoutId);
+             animationFrameId = null;
+             spawnTimeoutId = null;
 
-            // Reset game state variables
-            money = 100;
-            lives = 20;
-            score = 0;
-            wave = 0;
-            enemies = [];
-            towers = [];
-            projectiles = [];
-            placingTower = false;
-            selectedTowerType = null;
-            waveInProgress = false;
-            gameOver = false;
-            gameWon = false;
-            enemiesSpawnedThisWave = 0;
-            currentWaveEnemies = 0;
+            money = 100; lives = 20; score = 0; wave = 0;
+            enemies = []; towers = []; projectiles = [];
+            placingTower = false; selectedTowerType = null;
+            waveInProgress = false; gameOver = false; gameWon = false;
+            enemiesSpawnedThisWave = 0; currentWaveEnemies = 0;
 
-            // Reset UI
             hideMessage();
-            buildTowerBtn.classList.remove('selected'); // Ensure button is deselected visually
-            updateUI(); // Update UI before starting new loop
+            buildTowerBtn.classList.remove('selected');
+            updateUI();
 
-
-            // Short delay before restarting the loop to ensure cleanup
             setTimeout(() => {
-                 if (!animationFrameId && !gameOver && !gameWon) { // Check again before starting
-                    gameLoop();
-                 }
-            }, 50); // 50ms delay
+                 if (!animationFrameId && !gameOver && !gameWon) gameLoop();
+            }, 50);
         }
 
         // --- Game Loop ---
         function gameLoop() {
-            // Ensure loop doesn't run if game is over
             if (gameOver || gameWon) {
-                 animationFrameId = null; // Stop the loop
+                 animationFrameId = null;
                  return;
             }
 
@@ -602,19 +660,16 @@
 
             // 3. Update and Draw Towers
             towers.forEach(tower => {
-                tower.update(enemies, projectiles); // Pass enemies and projectiles array
-                tower.draw(ctx);
+                tower.update(enemies, projectiles);
+                tower.draw(ctx); // Uses new drawTowerShape
             });
 
             // 4. Update and Draw Projectiles
             projectiles = projectiles.filter(p => {
                 const hitOrExpired = p.move();
-                if (!hitOrExpired) {
-                    p.draw(ctx);
-                }
-                return !hitOrExpired; // Keep projectile if it hasn't hit/expired
+                if (!hitOrExpired) p.draw(ctx); // Uses updated projectile draw
+                return !hitOrExpired;
             });
-
 
             // 5. Update and Draw Enemies
             let enemiesToRemove = [];
@@ -622,73 +677,61 @@
                 const reachedEnd = enemy.move();
                 if (reachedEnd) {
                     lives--;
-                    enemiesToRemove.push(index); // Mark for removal
-                     if (lives <= 0 && !gameOver) { // Prevent multiple game over triggers
-                        lives = 0; // Ensure lives don't go negative
-                        gameOver = true;
+                    enemiesToRemove.push(index);
+                     if (lives <= 0 && !gameOver) {
+                        lives = 0; gameOver = true;
                         showMessage("Game Over! You ran out of lives.");
                     }
                 } else if (enemy.health <= 0) {
-                    // Enemy killed by projectile (money/score added in projectile hit logic)
-                    enemiesToRemove.push(index); // Mark killed enemy for removal
+                    enemiesToRemove.push(index);
                 } else {
-                    enemy.draw(ctx); // Only draw if alive and not at end
+                    enemy.draw(ctx); // Uses new drawEnemyShape
                 }
             });
 
-             // Remove enemies that reached the end or died (iterate backwards for safe removal)
              for (let i = enemiesToRemove.length - 1; i >= 0; i--) {
                  enemies.splice(enemiesToRemove[i], 1);
              }
-             // Update UI after potential life loss / score gain
-             updateUI();
-
+             updateUI(); // Update after potential changes
 
             // 6. Check Wave End Condition
             if (waveInProgress && enemies.length === 0 && enemiesSpawnedThisWave === currentWaveEnemies) {
                  waveInProgress = false;
-                 updateUI(); // Re-enable start wave button
+                 updateUI();
                  console.log(`Wave ${wave} cleared!`);
-                 // Add logic for winning the game after a certain wave if desired
-                 // if (wave >= MAX_WAVES) { gameWon = true; showMessage("You Won!"); }
             }
 
-            // 7. Draw Tower Placement Preview (if applicable)
-            if (placingTower && selectedTowerType) {
+            // 7. Draw Tower Placement Preview
+            if (placingTower && selectedTowerType && mouse.x >= 0 && mouse.y >= 0) { // Check mouse is over canvas
                  const tileX = Math.floor(mouse.x / TILE_SIZE);
                  const tileY = Math.floor(mouse.y / TILE_SIZE);
                  const previewX = tileX * TILE_SIZE + TILE_SIZE / 2;
                  const previewY = tileY * TILE_SIZE + TILE_SIZE / 2;
                  const towerConfig = towerTypes[selectedTowerType];
 
-                 // Check validity for visual feedback
                  const canPlace = money >= towerConfig.cost &&
                                   tileX >= 0 && tileX < cols && tileY >= 0 && tileY < rows &&
                                   !isPathTile(tileX, tileY) &&
                                   !isOccupied(tileX, tileY);
 
-                 // Draw preview tower shape
-                 ctx.globalAlpha = 0.5; // Make preview semi-transparent
-                 ctx.fillStyle = canPlace ? towerConfig.color : 'grey'; // Grey if invalid spot
-                 ctx.beginPath();
-                 ctx.rect(previewX - towerConfig.size / 2, previewY - towerConfig.size / 2, towerConfig.size, towerConfig.size);
-                 ctx.fill();
-                 ctx.globalAlpha = 1.0; // Reset transparency
+                 // Draw preview tower shape using the drawing function
+                 ctx.globalAlpha = 0.6;
+                 drawTowerShape(ctx, previewX, previewY, towerConfig.size, canPlace ? towerConfig.color : '#9E9E9E', canPlace ? towerConfig.colorDark : '#616161');
+                 ctx.globalAlpha = 1.0;
 
-                 // Draw range indicator for preview (always show range preview)
+                 // Draw range indicator
                  ctx.strokeStyle = canPlace ? 'rgba(255, 255, 255, 0.5)' : 'rgba(255, 0, 0, 0.5)';
-                 ctx.lineWidth = 1;
+                 ctx.lineWidth = 2; // Make range line thicker
                  ctx.beginPath();
                  ctx.arc(previewX, previewY, towerConfig.range, 0, Math.PI * 2);
                  ctx.stroke();
             }
 
-
             // 8. Request Next Frame
-             if (!gameOver && !gameWon) { // Only request next frame if game is active
+             if (!gameOver && !gameWon) {
                 animationFrameId = requestAnimationFrame(gameLoop);
             } else {
-                 animationFrameId = null; // Ensure loop stops if game over/won state reached mid-frame
+                 animationFrameId = null;
             }
         }
 
@@ -696,18 +739,14 @@
         startWaveBtn.addEventListener('click', startNextWave);
 
         buildTowerBtn.addEventListener('click', () => {
-            // Toggle basic tower placement mode
             if (placingTower && selectedTowerType === 'basic') {
-                 placingTower = false;
-                 selectedTowerType = null;
+                 placingTower = false; selectedTowerType = null;
                  buildTowerBtn.classList.remove('selected');
             } else {
-                 placingTower = true;
-                 selectedTowerType = 'basic'; // Only one type for now
+                 placingTower = true; selectedTowerType = 'basic';
                  buildTowerBtn.classList.add('selected');
-                 // Deselect other tower buttons if they existed in the future
             }
-             updateUI(); // Update button disabled state if money changed
+             updateUI();
         });
 
         canvas.addEventListener('mousemove', (event) => {
@@ -716,12 +755,9 @@
             mouse.y = event.clientY - rect.top;
         });
 
-         // Handle leaving the canvas area during placement
         canvas.addEventListener('mouseleave', () => {
-            mouse.x = -1; // Set mouse position outside canvas to hide preview
-            mouse.y = -1;
+            mouse.x = -1; mouse.y = -1; // Indicate mouse left canvas
         });
-
 
         canvas.addEventListener('click', (event) => {
             if (placingTower && selectedTowerType) {
@@ -732,18 +768,15 @@
             }
         });
 
-        // Add right-click listener to cancel tower placement
         canvas.addEventListener('contextmenu', (event) => {
-            event.preventDefault(); // Prevent browser context menu
+            event.preventDefault();
             if (placingTower) {
-                placingTower = false;
-                selectedTowerType = null;
+                placingTower = false; selectedTowerType = null;
                 buildTowerBtn.classList.remove('selected');
                 updateUI();
                 console.log("Tower placement cancelled.");
             }
         });
-
 
         restartBtn.addEventListener('click', resetGame);
 
